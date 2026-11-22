@@ -12,13 +12,15 @@ Aufruf:
     python3 basalt-repro.py pair N         # para*N, dann para*N+extra
 """
 import json
+import os
 import subprocess
 import sys
 import time
 import urllib.request
 
-API = "http://127.0.0.1:30000/v1/chat/completions"
-LOG = "/home/owc/basalt-serve-dbg.log"
+PORT = os.environ.get("PORT", "30000")                     # andere Lane auf einem anderen Port messen
+API = f"http://127.0.0.1:{PORT}/v1/chat/completions"
+LOG = os.environ.get("LANE_LOG", "/home/owc/basalt-serve-dbg.log")
 ENGINE_LOG = "/home/owc/.cache/basalt/9f5b71de33f93963/engine.log"
 
 PARA = ("Der Audio-Codec arbeitet mit einer Transformationsstufe, die Koeffizienten quantisiert und "

@@ -9,10 +9,12 @@ port's own README says it was measured on an RTX Spark N1X and that *"the DGX Sp
 generation but has not been tested"*. We tested it, found two faults that only show up on sm_121,
 fixed them far enough to run agent workloads for hours, and wrote the numbers down.
 
-**Scope:** the engine, the Arm64/sm_121 port and the model are other people's work — see
-[Credits](#credits). What is ours is the Spark bring-up: the two fixes in
-[`patches/`](patches/0001-spark-sm121-fixes.patch), the crash reproduction, the lane configuration
-and the measurements below. The fixes are **workarounds, not root causes**: we know which code path
+**What is ours** is the fork [`andreasknopke/basalt-arm-sm121`](https://github.com/andreasknopke/basalt-arm-sm121)
+(branch `hy4-port`, pinned in the installer): it merges the upstream **v0.5.0** into yanmindi's
+Arm64/sm_121 port — that merge is where the Hy4-flash support enters the port — adds the MMQ
+read-past fix for the dense tensors, and the two sm_121 prompt-fault fixes, plus the crash
+reproduction, the lane configuration and the measurements below. The engine, the port and the
+model underneath stay other people's work — see [Credits](#credits). The fixes are **workarounds, not root causes**: we know which code path
 faults and that the other one does not, not which instruction does it (see
 [Open questions](#open-questions)).
 
@@ -42,19 +44,67 @@ board is around 127, strong local lanes around 85 — 57 is a real codec, mid-fi
 
 ---
 
-## The setup
+## Install
+
+One script builds the whole lane with the versions this recipe was measured with — port commit
+`df6a10cf`, CUDA 13, `CMAKE_CUDA_ARCHITECTURES=121`, the NVFP4 pack `Hy4-flash-NVFP4` (147.8 GiB):
+
+```bash
+git clone https://github.com/andreasknopke/hy4-flash-on-spark
+cd hy4-flash-on-spark
+./install-hy4-basalt.sh                 # -> ~/basalt-hy4-port, port 30000, smoke test at the end
+```
+
+What it does, in order — every step is idempotent, so rerunning it after a failure is cheap:
+
+| Step | What happens | Time |
+|---|---|---|
+| 1 | machine checks: aarch64, CUDA 13, cmake >= 3.24, gcc >= 13, python >= 3.11, 160 GiB free for the pack | seconds |
+| 2 | clones `yanmindi/basalt-arm-sm121` at **`df6a10cf`**, the commit we validated | ~1 min |
+| 3 | applies `patches/0001-spark-sm121-fixes.patch`: NVFP4 on the tiled MMQ path, expert ring off, product names in the MMQ launch errors | seconds |
+| 4 | builds it, `-DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=121` | ~10 min |
+| 5 | creates `./.venv` and installs the pinned `requirements.txt` | ~1 min |
+| 6 | downloads the pack from [jesdga/Hy4-flash-Basalt](https://huggingface.co/jesdga/Hy4-flash-Basalt) into `models/`, resumable and size-checked | 1–3 h |
+| 7 | writes `start-lane.sh`, optionally the systemd user unit, starts the lane once and smoke-tests it | ~1 min |
+
+Flags that matter: `--dir <path>`, `--pack <file>` (use a pack you already have), `--skip-pack`
+(build only), `--port <n>`, `--jobs <n>`, `--install-unit`, `--no-smoke`, `--kv int8`.
+
+Nothing needs root. Afterwards:
+
+```bash
+~/basalt-hy4-port/start-lane.sh            # foreground
+systemctl --user start hy4-basalt          # if installed with --install-unit
+```
+
+The unit is deliberately left **disabled**: port 30000 is shared with other lanes on our box, so an
+automatic start would race them. The start script refuses a busy port instead of starting into
+someone else's server.
+
+### Requirements
 
 | | |
 |---|---|
+| Machine | DGX Spark (GB10) or another Arm64 box with the compute-capability 12.1 GPU |
+| CUDA | 13.x toolkit (`nvcc`); measured with 13.0.88 |
+| Toolchain | GCC 13+, CMake 3.24+, Python 3.11+ |
+| Disk | ~150 GiB for the pack, ~5 GiB for the build |
+| Memory | 121 GiB unified; the lane holds 86.2 GiB of weights plus the KV |
+
+The acceptance test for the installed lane is the one in
+[Acceptance test before every run](#acceptance-test-before-every-run) — `tools/basalt-repro.py` now also takes `PORT` and `LANE_LOG` from the environment, so it can
+point at a lane on a non-default port.
+
+---|---|
 | Machine | DGX Spark, NVIDIA GB10, compute capability 12.1, 121 GiB unified memory |
 | Driver / CUDA | 580.159.03 / CUDA 13.0.88 |
 | OS | Ubuntu 24.04.4 LTS (aarch64), kernel 6.17.0-1021-nvidia |
 | Toolchain | GCC 13.3, CMake 3.28 |
 | Model | [tencent/Hy4-flash](https://huggingface.co/tencent/Hy4-flash) — 224B total (incl. 64B Engram), 12B active, 1M context |
 | Pack | `Hy4-flash-NVFP4.basalt`, 147.8 GiB, from [jesdga/Hy4-flash-Basalt](https://huggingface.co/jesdga/Hy4-flash-Basalt) |
-| Engine | [yanmindi/basalt-arm-sm121](https://github.com/yanmindi/basalt-arm-sm121) — the Arm64/sm_121 port of [jesdga95/basalt](https://github.com/jesdga95/basalt) |
+| Engine | [andreasknopke/basalt-arm-sm121](https://github.com/andreasknopke/basalt-arm-sm121) — our fork (`hy4-port`) of [yanmindi/basalt-arm-sm121](https://github.com/yanmindi/basalt-arm-sm121), which is the Arm64/sm_121 port of [jesdga95/basalt](https://github.com/jesdga95/basalt); the fork merges upstream v0.5.0 and carries the fixes |
 
-Build (the port's own instructions apply; nothing special is needed for the Spark):
+`install-hy4-basalt.sh` does the following; manually it is:
 
 ```bash
 git clone https://github.com/yanmindi/basalt-arm-sm121 basalt-hy4-port
