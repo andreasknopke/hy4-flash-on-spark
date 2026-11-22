@@ -52,8 +52,24 @@ One script builds the whole lane with the versions this recipe was measured with
 ```bash
 git clone https://github.com/andreasknopke/hy4-flash-on-spark
 cd hy4-flash-on-spark
-./install-hy4-basalt.sh                 # -> ~/basalt-hy4-port, port 30000, smoke test at the end
+
+./install-hy4-basalt.sh              # text only: 4 slots x 262144 — the agent configuration
+./install-hy4-basalt.sh --vision     # image input: 1 slot, 262144 total
 ```
+
+**Pick one — the two configurations are mutually exclusive on this box**, and that is measured, not
+assumed (the numbers are in [Vision is optional](#vision-is-optional-and-it-costs-concurrency)):
+
+| | `./install-hy4-basalt.sh` | `./install-hy4-basalt.sh --vision` |
+|---|---|---|
+| Slots | 4 | 1 |
+| Context | 1048576 cells, 262144 per slot | 262144 in the single slot |
+| Image input | no — `images=off` | yes — `images=on`, `--vision dynamic` |
+| For agent workloads | yes; a long request does not block the others | no; one request at a time |
+| Start line it writes | `--parallel 4 --max-context 1048576 --fit-max-tokens` | `--parallel 1 --max-context 262144 --fit-max-tokens --vision dynamic` |
+
+Both write the same `start-lane.sh` and, with `--install-unit`, the same systemd user unit — only the
+engine flags differ. Nothing else changes, so switching later is one flag and a rerun.
 
 What it does, in order — every step is idempotent, so rerunning it after a failure is cheap:
 
@@ -67,8 +83,9 @@ What it does, in order — every step is idempotent, so rerunning it after a fai
 | 6 | downloads the pack from [jesdga/Hy4-flash-Basalt](https://huggingface.co/jesdga/Hy4-flash-Basalt) into `models/`, resumable and size-checked | 1–3 h |
 | 7 | writes `start-lane.sh`, optionally the systemd user unit, starts the lane once and smoke-tests it | ~1 min |
 
-Flags that matter: `--dir <path>`, `--pack <file>` (use a pack you already have), `--skip-pack`
-(build only), `--port <n>`, `--jobs <n>`, `--install-unit`, `--no-smoke`, `--kv int8`.
+Flags that matter: `--vision` (the single-slot image configuration), `--dir <path>`, `--pack <file>`
+(use a pack you already have), `--skip-pack` (build only), `--port <n>`, `--jobs <n>`, `--install-unit`,
+`--no-smoke`, `--kv int8`.
 
 Nothing needs root. Afterwards:
 
@@ -80,6 +97,23 @@ systemctl --user start hy4-basalt          # if installed with --install-unit
 The unit is deliberately left **disabled**: port 30000 is shared with other lanes on our box, so an
 automatic start would race them. The start script refuses a busy port instead of starting into
 someone else's server.
+
+### Vision is optional, and it costs concurrency
+
+The lane as installed runs with `images=off` — text only, four slots, 262144 per slot. Image input is
+one flag away (`--vision dynamic`), but on this box it only starts with a **single slot**:
+
+| Configuration | Result |
+|---|---|
+| `--parallel 1 --max-context 262144 --vision dynamic` | loads in 30 s, `ctx=262144 images=on`, reads a test image correctly |
+| `--parallel 2 / 3 / 4` with `--vision dynamic` | dies after 10 s in the planning step: `RAM ran out loading` — at every context size from 65536 to 524288 |
+| `--vision cpu` | refused by the model: `this model's images are encoded in the engine: --vision dynamic, not cpu` |
+
+The encoder's reservation is taken per slot, and two of them already exceed what is left next to the
+86.2 GiB of weights. So vision and the four-slot agent configuration are mutually exclusive here:
+either image input with one slot (a long request blocks the others), or four slots without vision.
+A measured image answer: a 900x360 PNG reading "SPARK-42 / Basalt NVFP4 / 22 Aug 2026" came back
+verbatim, `finish_reason: stop`, 363 prompt tokens.
 
 ### Requirements
 

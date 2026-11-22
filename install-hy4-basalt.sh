@@ -18,6 +18,7 @@
 #   ./install-hy4-basalt.sh                        # ~/basalt-hy4-port, port 30000, no unit
 #   ./install-hy4-basalt.sh --install-unit         # also install the systemd --user unit
 #   ./install-hy4-basalt.sh --pack /mnt/x.basalt   # use a pack you already have
+#   ./install-hy4-basalt.sh --vision               # single-slot image configuration
 #   ./install-hy4-basalt.sh --skip-pack            # build only (no pack)
 #   ./install-hy4-basalt.sh --port 30001 --jobs 8
 set -euo pipefail
@@ -40,6 +41,7 @@ PACK=""
 SKIP_PACK=0
 SMOKE=1
 UNIT=0
+VISION=0
 KV=""
 
 while [ $# -gt 0 ]; do
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
         --pack) PACK="$2"; shift 2 ;;
         --skip-pack) SKIP_PACK=1; shift ;;
         --no-smoke) SMOKE=0; shift ;;
+        --vision) VISION=1; shift ;;
         --install-unit) UNIT=1; shift ;;
         --kv) KV="$2"; shift 2 ;;
         -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
@@ -174,6 +177,19 @@ else
     fi
 fi
 say 7/7 "lane start script and smoke test"
+# Two measured configurations, mutually exclusive on this box (see the README):
+#   text: 4 slots x 262144, images off  -- the agent configuration
+#   vision: 1 slot, 262144 total, --vision dynamic -- every --parallel >= 2 dies in the planning
+#           step with "RAM ran out loading", at any context size from 65536 to 524288
+if [ "$VISION" = 1 ]; then
+    LANE_FLAGS="--parallel 1 --max-context 262144 --fit-max-tokens --vision dynamic"
+    LANE_DESC="1 slot x 262144, image input on"
+else
+    LANE_FLAGS="--parallel 4 --max-context 1048576 --fit-max-tokens"
+    LANE_DESC="4 slots x 262144, image input off"
+fi
+KV_FLAG=""
+[ -n "$KV" ] && KV_FLAG=" --kv ${KV}"
 cat > "$TARGET/start-lane.sh" <<EOF
 #!/bin/sh
 # Hy4-Flash NVFP4 via Basalt in the foreground (for the systemd unit and for manual use).
@@ -189,10 +205,10 @@ exec "${TARGET}/.venv/bin/python" -m serve.server \\
     --engine-bin "${TARGET}/bin/basalt" \\
     --model "${PACK_RESOLVED}" \\
     --alias hy4-flash --host 0.0.0.0 --port "${PORT}" \\
-    --parallel 4 --max-context 1048576 --fit-max-tokens ${KV}
+    ${LANE_FLAGS}${KV_FLAG}
 EOF
 chmod +x "$TARGET/start-lane.sh"
-echo "  $TARGET/start-lane.sh  (4 slots x 262144 tokens, --fit-max-tokens)"
+echo "  $TARGET/start-lane.sh  ($LANE_DESC)"
 
 if [ "$UNIT" = 1 ]; then
     UNIT_DIR="${HOME}/.config/systemd/user"
@@ -219,13 +235,39 @@ EOF
 fi
 
 if [ "$SMOKE" = 1 ] && [ "$SKIP_PACK" = 0 ]; then
+    # The engine's planner compares its budget against MemFree, and the pack's page cache counts as
+    # used: right after the download and the size check the box can look full (we measured 2.9 GiB
+    # free with 148 GiB of cache) and the load dies with "RAM ran out loading". posix_fadvise drops
+    # the cache without root and without touching a running download.
+    PACK_FADV="${PACK_RESOLVED:-${TARGET}/models/${PACK_NAME}}"
+    if [ -f "$PACK_FADV" ]; then
+        if python3 - "$PACK_FADV" <<'FADV'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+os.close(fd)
+FADV
+        then
+            echo "  dropped the pack's page cache — MemFree now $(awk '/MemFree/{printf "%.0f", $2/1048576}' /proc/meminfo) GiB"
+        else
+            echo "  warning: could not drop the pack's page cache"
+        fi
+    fi
+
     # The smoke test loads the whole pack into unified memory (~86 GiB) and then builds the KV on top.
     # On a box that is already running another lane (or downloading something) that ends in
     # "RAM ran out loading" — which says nothing about the install. Skip it instead of failing.
-    AVAIL_GIB="$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo)"
+    # MemFree, not MemAvailable: the engine's planner compares against MemFree, so a full page cache
+    # (another lane's reads, a finished download) makes it refuse even though the kernel would reclaim.
+    for _ in $(seq 1 24); do
+        AVAIL_GIB="$(awk '/MemFree/{printf "%d", $2/1048576}' /proc/meminfo)"
+        [ "${AVAIL_GIB:-0}" -ge 100 ] && break
+        sleep 5
+    done
     if [ "${AVAIL_GIB:-0}" -lt 100 ]; then
-        echo "  skipped: only ${AVAIL_GIB} GiB RAM available, the smoke test needs ~100 GiB free"
-        echo "           (stop other lanes and run: $TARGET/start-lane.sh)"
+        echo "  skipped: only ${AVAIL_GIB} GiB MemFree, the smoke test needs ~100 GiB (the engine"
+        echo "           budgets against MemFree, so other caches count against it); later:"
+        echo "           $TARGET/start-lane.sh"
         SMOKE=0
     fi
 fi
@@ -236,16 +278,48 @@ if [ "$SMOKE" = 1 ] && [ "$SKIP_PACK" = 0 ]; then
     SMOKE_PID=$!
     cleanup_smoke() { kill "$SMOKE_PID" 2>/dev/null || true; pkill -f "${TARGET}/bin/basalt" 2>/dev/null || true; }
     trap cleanup_smoke EXIT
-    for _ in $(seq 1 60); do
+    # /v1/models answers while the weights are still loading (status "loading"), so wait for
+    # status "loaded" before asking for a completion.
+    LOADED=0
+    for _ in $(seq 1 90); do
         sleep 5
-        if curl -fsS -m 5 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then break; fi
-        kill -0 "$SMOKE_PID" 2>/dev/null || { tail -20 "$TARGET/smoke.log"; die "the lane died during startup (see $TARGET/smoke.log)"; }
+        kill -0 "$SMOKE_PID" 2>/dev/null || { tail -20 "$TARGET/smoke.log"; SMOKE_FAIL=1; break; }
+        if curl -fsS -m 5 "http://127.0.0.1:${PORT}/v1/models" 2>/dev/null | grep -q '"value": *"loaded"'; then
+            LOADED=1; break
+        fi
     done
+    [ "$LOADED" = 1 ] || SMOKE_FAIL=1
+    if [ "${SMOKE_FAIL:-0}" = 1 ]; then
+        echo "  NOTE: the lane did not come up for the smoke test. That is a statement about this box's"
+        echo "        free memory at this moment, not about the install: the engine needs ~100 GiB free"
+        echo "        next to the 86.2 GiB of weights, and another lane's leftovers or a warm page cache"
+        echo "        count against it. The build, the venv and the pack above are installed either way."
+        echo "        Start it later with: $TARGET/start-lane.sh"
+        kill "$SMOKE_PID" 2>/dev/null || true
+        pkill -f "${TARGET}/bin/basalt" 2>/dev/null || true
+        SMOKE=0
+    fi
     curl -fsS -m 5 "http://127.0.0.1:${PORT}/v1/models" | head -c 200; echo
-    curl -fsS -m 120 "http://127.0.0.1:${PORT}/v1/chat/completions" \
-        -H 'Content-Type: application/json' \
-        -d '{"model":"hy4-flash","max_tokens":16,"temperature":0,"messages":[{"role":"user","content":"Say OK."}]}' \
-        | head -c 300; echo
+
+    # A 503 here means the engine is still coming up after the weights: retry before failing.
+    SMOKE_OK=0
+    for attempt in 1 2 3 4 5; do
+        if SMOKE_OUT="$(curl -fsS -m 180 "http://127.0.0.1:${PORT}/v1/chat/completions" \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"hy4-flash","max_tokens":16,"temperature":0,"messages":[{"role":"user","content":"Say OK."}]}' 2>&1)"; then
+            echo "$SMOKE_OUT" | head -c 300; echo
+            SMOKE_OK=1; break
+        fi
+        echo "  completion attempt ${attempt} failed (${SMOKE_OUT##*: }) — retrying in 10 s"
+        sleep 10
+    done
+    if [ "$SMOKE_OK" != 1 ]; then
+        tail -5 "$TARGET/smoke.log"
+        echo "  NOTE: the lane loaded but did not answer a completion — check $TARGET/smoke.log."
+    fi
+    if [ "$VISION" = 1 ]; then
+        grep -q 'images=on' "$TARGET/smoke.log" && echo "  image input is on (images=on)" || echo "  NOTE: expected images=on in the log, found: $(grep -oE 'images=[a-z]+' "$TARGET/smoke.log" | tail -1)"
+    fi
     echo "  smoke test done — stopping the lane again"
     kill "$SMOKE_PID" 2>/dev/null || true
     sleep 3
@@ -255,7 +329,7 @@ fi
 cat <<EOF
 
 Done.
-  port        : ${PORT}  (4 slots x 262144 tokens, KV ${KV:-default fp8})
+  port        : ${PORT}  (${LANE_DESC}, KV ${KV:-default fp8})
   start       : ${TARGET}/start-lane.sh
   $( [ "$UNIT" = 1 ] && echo "or          : systemctl --user start hy4-basalt" || echo "unit        : not installed (--install-unit to add it)" )
   acceptance  : tools/basalt-repro.py crash    -> R1/R2/R3 must pass, then
