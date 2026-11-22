@@ -9,7 +9,7 @@ port's own README says it was measured on an RTX Spark N1X and that *"the DGX Sp
 generation but has not been tested"*. We tested it, found two faults that only show up on sm_121,
 fixed them far enough to run agent workloads for hours, and wrote the numbers down.
 
-**Scope, honestly:** the engine, the Arm64/sm_121 port and the model are other people's work — see
+**Scope:** the engine, the Arm64/sm_121 port and the model are other people's work — see
 [Credits](#credits). What is ours is the Spark bring-up: the two fixes in
 [`patches/`](patches/0001-spark-sm121-fixes.patch), the crash reproduction, the lane configuration
 and the measurements below. The fixes are **workarounds, not root causes**: we know which code path
