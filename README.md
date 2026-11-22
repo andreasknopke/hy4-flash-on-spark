@@ -23,7 +23,8 @@ faults and that the other one does not, not which instruction does it (see
 | | |
 |---|---|
 | Prefill | **800–860 tok/s** fresh (33k-token prompt: 39.9 s), 273–798 tok/s with cache reuse |
-| Decode | **21–23 tok/s** on short contexts, **5–13 tok/s** at 110k–128k contexts |
+| Decode | **20–23 tok/s**, essentially independent of context: 20.3 at 165k, 20.0 at 220k with one active slot. The 5–13 tok/s seen during the agent runs is *concurrency* — several slots sharing the MoE — not context length |
+| Context per request | **262 144 tokens, prompt + answer together** — the hard limit is the slot window; the server refuses more instead of truncating (`requests are never truncated`). Measured: 165 022 and 220 022 tokens pass, 264 022 is refused. The expert tier does not bind here: 100 % decode expert-cache hits at 220k |
 | KV ceiling (4 slots) | `elastic KV: about 262144 cells fit in the 4 sessions (1048576 at full context)` |
 | Stability | **0 engine faults** across both benchmark runs (≈500 requests, peak request 128k tokens) |
 
