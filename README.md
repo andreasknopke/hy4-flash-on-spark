@@ -37,11 +37,8 @@ Benchmark results, both on the public leaderboards:
   (35 of 57 points), 11/15 structure questions right, compression ratio 61.2 →
   [issue #13](https://github.com/andreasknopke/codec-reverse-bench-leaderboard/issues/13)
 
-Both results come from the **Basalt NVFP4 lane** described above — the submissions' hardware lines say so.
-The llama.cpp lane with the SPARK-4Bit GGUF is a different setup and is not what these numbers measure.
-
 For reference: on the codec leaderboard the cap without a verified roundtrip is 25, the top of the
-board is around 127, strong local lanes around 85 — 57 is a real codec, mid-field.
+board is around 127, strong local lanes around 85 — 57 is a real codec, mid-field, about on par with Qwen3.8-Flash-Next NVFP4
 
 ---
 
