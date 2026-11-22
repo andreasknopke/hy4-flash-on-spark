@@ -36,6 +36,9 @@ Benchmark results, both on the public leaderboards:
   (35 of 57 points), 11/15 structure questions right, compression ratio 61.2 →
   [issue #13](https://github.com/andreasknopke/codec-reverse-bench-leaderboard/issues/13)
 
+Both results come from the **Basalt NVFP4 lane** described above — the submissions' hardware lines say so.
+The llama.cpp lane with the SPARK-4Bit GGUF is a different setup and is not what these numbers measure.
+
 For reference: on the codec leaderboard the cap without a verified roundtrip is 25, the top of the
 board is around 127, strong local lanes around 85 — 57 is a real codec, mid-field.
 
@@ -214,8 +217,10 @@ Everything that makes this run is other people's work. Our thanks to:
   `patches/`.
 * **[Tencent Hunyuan](https://huggingface.co/tencent/Hy4-flash)** — the Hy4-flash model (224B total,
   12B active, 1M context, natively multimodal) released as open weights.
-* **[AngelSlim](https://huggingface.co/AngelSlim/Hy4-flash-GGUF)** — the SPARK-4Bit GGUF that we used
-  for the llama.cpp comparison runs on the same box.
+* **[AngelSlim](https://huggingface.co/AngelSlim/Hy4-flash-GGUF)** — the SPARK-4Bit GGUF and its spark-patch,
+  which powered the *llama.cpp* comparison lane on the same box. **It is not what this recipe runs**: the
+  lane described here serves the NVFP4 pack from the setup table above through Basalt. The two are separate
+  lanes, and a comparison across quantisations is not a model comparison.
 * **The [llama.cpp / ggml](https://github.com/ggml-org/llama.cpp) authors** — the MMQ kernels,
   tile configurations and quantisation layouts that Basalt's prefill path is built on, and the Arm
   kernels the port reuses.
@@ -240,8 +245,4 @@ only have a hypothesis it says so.
 
 The patch and the tooling in this repository are offered under the MIT licence, the same terms as
 Basalt upstream. Basalt, the Arm64/sm_121 port, llama.cpp/ggml, Strata, the model and the packs keep
-their own licences — see the respective repositories. The patches here apply to the port's tree
-and therefore also carry its upstream MIT terms.
-
-Thanks again to everyone named under [Credits](#credits); this repository would not exist
-without their work.
+their own licences — see the respective repositories.
