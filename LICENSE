@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This repository documents work on top of other people's MIT-licensed projects
-(Basalt, the Arm64/sm_121 port, llama.cpp/ggml, Strata). Their copyright notices
-and licences live in their own repositories; see the Credits section of README.md.

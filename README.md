@@ -240,4 +240,8 @@ only have a hypothesis it says so.
 
 The patch and the tooling in this repository are offered under the MIT licence, the same terms as
 Basalt upstream. Basalt, the Arm64/sm_121 port, llama.cpp/ggml, Strata, the model and the packs keep
-their own licences — see the respective repositories.
+their own licences — see the respective repositories. The patches here apply to the port's tree
+and therefore also carry its upstream MIT terms.
+
+Thanks again to everyone named under [Credits](#credits); this repository would not exist
+without their work.
