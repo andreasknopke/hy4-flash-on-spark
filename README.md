@@ -23,7 +23,7 @@ faults and that the other one does not, not which instruction does it (see
 | | |
 |---|---|
 | Prefill | **~790–830 tok/s, essentially flat from 16k to 262k tokens** — 822 at 16.5k, 828 at 165k, 808 at 220k, 796 at 250k, 791 at 262k. It is the per-token cost of this model (top-16 of 512 experts over 41 layers, plus the sparse-layer indexer), not a long-context effect |
-| Decode | **20–23 tok/s**, essentially independent of context: 20.3 at 165k, 20.0 at 220k, 24.9 at 250k and 262k with one active slot. The 5–13 tok/s seen during the agent runs is *concurrency* — several slots sharing the MoE — not context length |
+| Decode | **20–23 tok/s**, essentially independent of context: 20.3 at 165k, 20.0 at 220k, 24.9 at 250k and 262k with one active slot. |
 | Context per request | **262 144 tokens, prompt + answer together** — the hard limit is the slot window; the server refuses more instead of truncating (`requests are never truncated`). Measured: 165 022, 220 022, 249 997 and 261 987 tokens pass, 264 022 is refused — so the limit is the window itself, and the largest prompt is 262 144 minus the answer budget. The expert tier does not bind here: 100 % decode expert-cache hits at 220k |
 | KV ceiling (4 slots) | `elastic KV: about 262144 cells fit in the 4 sessions (1048576 at full context)` |
 | Stability | **0 engine faults** across both benchmark runs (≈500 requests, peak request 128k tokens) |
