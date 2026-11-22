@@ -194,8 +194,7 @@ per-layer staging costs nothing measurable here, so this is a workaround with no
 * The stream-k fault was pinned to the MMQ product with blocking launches, but not to a line. A
   standalone MMQ test at the failing geometry is the obvious next step.
 * Both fixes are **not upstreamed** — this repository only offers the patch. If the port's maintainer
-  wants it, a PR is the natural place; we did not open one on someone else's repository without
-  asking.
+  wants it, a PR is the natural place; we did not open an issue yet.
 
 ---
 
